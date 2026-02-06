@@ -2,6 +2,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
+#include <iostream>
 #include <sqlite3.h>
 #include <string>
 #include <sys/socket.h>    /* Unix; Windows: use winsock2.h for send() */
@@ -19,7 +21,7 @@ int callback(void *data, int argc, char **argv, char **azColName) {
 }
 
 
-int count_users(void *count, int argc, char **argv, char **azColName) {
+int count_rows(void *count, int argc, char **argv, char **azColName) {
     if (argc == 1) {
         *static_cast<int*>(count) = atoi(argv[0]);
     } else {
@@ -29,20 +31,180 @@ int count_users(void *count, int argc, char **argv, char **azColName) {
 }
 
 
+void create_users(sqlite3* db) {
+    const char *sql;
+    int rc;
+    char *zErrMsg = 0;
+
+    // Create the Users table
+    sql = "CREATE TABLE IF NOT EXISTS Users (" \
+        "ID INTEGER PRIMARY KEY AUTOINCREMENT," \
+        "email TEXT NOT NULL," \
+        "first_name TEXT," \
+        "last_name TEXT," \
+        "user_name TEXT NOT NULL," \
+        "password TEXT," \
+        "usd_balance DOUBLE NOT NULL);" ;
+
+    rc = sqlite3_exec(db, sql, callback, 0, &zErrMsg);
+    if( rc != SQLITE_OK ){
+        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+    } else {
+        fprintf(stdout, "Users table created successfully\n");
+    }
+    
+    // Check if there are any users and if not manually create one
+    sql = "SELECT COUNT(*) FROM Users;";
+    int user_count = 0;
+    cout << "Checking user count" << endl;
+
+    rc = sqlite3_exec(db, sql, count_rows, (void*) &user_count, &zErrMsg);
+    if( rc != SQLITE_OK ){
+        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+    } else {
+        fprintf(stdout, "Operation done successfully\n");
+    }
+
+    if (user_count == 0) {
+        fprintf(stdout, "Creating a user because no users currently exist\n");
+
+        sql = "INSERT INTO Users (ID, email, first_name, last_name, user_name, password, usd_balance)" \
+            "VALUES (1, 'joeshmoe@default.com', 'Joe', 'Shmoe', 'Default_User', 'password1', 100.00 );";
+
+        rc = sqlite3_exec(db, sql, callback, 0, &zErrMsg);
+        if( rc != SQLITE_OK ){
+            fprintf(stderr, "SQL error: %s\n", zErrMsg);
+            sqlite3_free(zErrMsg);
+        } else {
+            fprintf(stdout, "Records created successfully\n");
+        }
+    } else {
+        fprintf(stdout, "There are currently %d users in the database\n", user_count);
+    }
+}
+
+
+void create_stocks(sqlite3* db) {
+    const char *sql;
+    int rc;
+    char *zErrMsg = 0;
+
+    // Create the Stocks table
+    sql = "CREATE TABLE IF NOT EXISTS Stocks (" \
+        "ID INTEGER PRIMARY KEY AUTOINCREMENT," \
+        "stock_symbol VARCHAR(4) NOT NULL," \
+        "stock_name VARCHAR(20) NOT NULL," \
+        "stock_balance DOUBLE," \
+        "user_id INTEGER," \
+        "FOREIGN KEY (user_id) REFERENCES Users (ID) );";
+
+    rc = sqlite3_exec(db, sql, callback, 0, &zErrMsg);
+    if( rc != SQLITE_OK ){
+        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+    } else {
+        fprintf(stdout, "Stocks table created successfully\n");
+    }
+
+    // add stocks to the stocks table if it is empty
+    sql = "SELECT COUNT(*) FROM Stocks;";
+    int stock_count = 0;
+    cout << "Checking if Stocks table has entries" << endl;
+
+    rc = sqlite3_exec(db, sql, count_rows, (void*) &stock_count, &zErrMsg);
+    if( rc != SQLITE_OK ){
+        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+    } else {
+        fprintf(stdout, "Check operation was successful\n");
+    }
+
+    if (stock_count == 0) {
+        fprintf(stdout, "Inserting stocks for the default user because no stocks currently exist\n");
+
+        sql = "INSERT INTO Stocks (stock_symbol, stock_name, stock_balance, user_id) VALUES " \
+            "('AAPL', 'Apple', 0, 1), " \
+            "('MSFT', 'Microsoft', 0, 1), " \
+            "('AMZN', 'Amazon', 0, 1), " \
+            "('GOOG', 'Alphabet', 0, 1), "\
+            "('META', 'Meta', 0, 1), " \
+            "('NVDA', 'Nvidia', 0, 1), " \
+            "('TSLA', 'Tesla', 0, 1);";
+
+        rc = sqlite3_exec(db, sql, callback, 0, &zErrMsg);
+        if( rc != SQLITE_OK ){
+            fprintf(stderr, "SQL error: %s\n", zErrMsg);
+            sqlite3_free(zErrMsg);
+        } else {
+            fprintf(stdout, "Records created successfully\n");
+        }
+    } else {
+        fprintf(stdout, "There are currently %d stocks in the database\n", stock_count);
+    }
+}
+
+
 int buy_command(int socket, char* request, sqlite3* db) {
-    char *buy = strtok(request, " ");
-    char *stock_symbol = strtok(NULL, " ");
-    char *stock_amount = strtok(NULL, " ");
-    char *price = strtok(NULL, " ");
-    char *user_id = strtok(NULL, " ");
+    // TODO make sure to test invalid strings like missing fields or not numbers
+
+    // parse input string (strtok_r is thread-safe; saveptr holds state between calls)
+    char *saveptr = nullptr;
+    char *buy = strtok_r(request, " ", &saveptr);
+    char *stock_symbol = strtok_r(nullptr, " ", &saveptr);
+    char *amount_str = strtok_r(nullptr, " ", &saveptr);
+    char *price_str = strtok_r(nullptr, " ", &saveptr);
+    char *user_id = strtok_r(nullptr, " ", &saveptr);
 
     // check for format errors
-    if (!buy || !stock_symbol || !stock_amount || !price || !user_id) {
-        const char* error_code = "403 message format error\nCorrect format: BUY <stock_symbol> <amount> <price> <user_id>\n";
+    if (!buy || !stock_symbol || !amount_str || !price_str || !user_id) {
+        fprintf(stderr, "BUY command recieved but incorrecly formatted\n");
+        fprintf(stderr, "Error message sent to client\n");
+        const char* error_code = "403 message format error\nCorrect format: BUY <stock_symbol> <amount_to_buy> <price_per_stock> <user_id>\n";
         send(socket, error_code, strlen(error_code), 0);
         return -1;
     }
 
+    // convert the amount and price to doubles
+    double amount_to_buy;
+    double price_per_stock;
+    try {
+        amount_to_buy = std::stod(amount_str); // throws exception if conversion fails
+        price_per_stock = std::stod(price_str);
+    } catch (const std::exception&) {
+        fprintf(stderr, "Amount or price are not valid numbers\n");
+        const char* error_code = "403 message format error\nAmount and price fields must be numbers.\n";
+        send(socket, error_code, strlen(error_code), 0);
+        return -1;
+    }
+
+    // calculate stockprice and deduct it from the users and stocks balance
+    double stockprice = amount_to_buy * price_per_stock;
+    char sql[256];
+    int rc;
+    char *zErrMsg = 0;
+
+    // get id and balance first
+    snprintf(sql, sizeof(sql),
+            "SELECT FROM Stocks WHERE ... "); // TODO finish here
+    // insert to Stocks table
+    double new_balance = 0;
+    snprintf(sql, sizeof(sql), //TODO warning missing stock_name!!
+             "INSERT INTO Stocks (stock_symbol, stock_balance, user_id) VALUES (%s, %f, %d);",       
+             stock_symbol, new_balance, 1);
+
+    // update balance in Users table
+
+
+    // new record in the Stocks table is created or updated if one does exist
+
+    // If the operation is successful return a message to the client with “200 OK”, 
+    // the new usd_balance
+    // and new stock_balance;
+    // otherwise, an appropriate message should be displayed, e.g.: Not
+    // enough balance, or user1 doesn’t exist, etc.
+     
     // TODO finish
 
     return 0;

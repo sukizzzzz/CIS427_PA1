@@ -11,7 +11,17 @@ int callback(void *data, int argc, char **argv, char **azColName);
 /** Used to count the number of entries in a table.
  *  Meant to be passed to sqlite3_exec with an sql query of SELECT COUNT(*) FROM table;
  */
-int count_users(void *count, int argc, char **argv, char **azColName);
+int count_rows(void *count, int argc, char **argv, char **azColName);
+
+/** This creates the Users table if it doesn't exits and adds a default user 
+ *  if there are no users in the table 
+ */
+void create_users(sqlite3* db);
+
+/** This creates the Stocks table if it doesn't exits and inserts the mag 7 stocks
+ *  for the default user if the table is empty.
+ */
+void create_stocks(sqlite3* db);
 
 /** This will buy an amount of stocks and respond to the client
  *  with the new balance. It creates or updates a record in the stock

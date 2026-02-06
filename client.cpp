@@ -71,7 +71,7 @@ int main(int argc, char * argv[]) {
         /* send command */
         send(s, buf, len, 0);
        
-        bool is_quit = (strncmp(buf, "quit", 4) == 0);
+        bool is_quit = (strncmp(buf, "QUIT", 4) == 0);
        
         /* receive response */
         memset(response, 0, sizeof(response));

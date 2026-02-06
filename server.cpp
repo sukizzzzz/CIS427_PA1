@@ -55,72 +55,11 @@ int main(int argc, char* argv[]) {
     }
 
 
-    // Create the Users table
-    sql = "CREATE TABLE IF NOT EXISTS Users (" \
-        "ID INTEGER PRIMARY KEY AUTOINCREMENT," \
-        "email TEXT NOT NULL," \
-        "first_name TEXT," \
-        "last_name TEXT," \
-        "user_name TEXT NOT NULL," \
-        "password TEXT," \
-        "usd_balance DOUBLE NOT NULL);" ;
+    // create the users table if needed and add a default user if empty
+    create_users(db);
 
-    rc = sqlite3_exec(db, sql, callback, 0, &zErrMsg);
-    if( rc != SQLITE_OK ){
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-    } else {
-        fprintf(stdout, "Table created successfully\n");
-    }
-    
-
-    // Create the Stocks table
-    sql = "CREATE TABLE IF NOT EXISTS Stocks (" \
-        "ID INTEGER PRIMARY KEY AUTOINCREMENT," \
-        "stock_symbol VARCHAR(4) NOT NULL," \
-        "stock_name VARCHAR(20) NOT NULL," \
-        "stock_balance DOUBLE," \
-        "user_id INTEGER," \
-        "FOREIGN KEY (user_id) REFERENCES Users (ID) );";
-
-    rc = sqlite3_exec(db, sql, callback, 0, &zErrMsg);
-    if( rc != SQLITE_OK ){
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-    } else {
-        fprintf(stdout, "Table created successfully\n");
-    }
-
-
-    // Check if there are any users and if not manually create one
-    sql = "SELECT COUNT(*) FROM Users;";
-    int user_count = 0;
-    cout << "checking user count" << endl;
-
-    rc = sqlite3_exec(db, sql, count_users, (void*) &user_count, &zErrMsg);
-    if( rc != SQLITE_OK ){
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-    } else {
-        fprintf(stdout, "Operation done successfully\n");
-    }
-
-    if (user_count == 0) {
-        fprintf(stdout, "Creating a user because no users currently exist\n");
-
-        sql = "INSERT INTO Users (ID, email, first_name, last_name, user_name, password, usd_balance)" \
-            "VALUES (1, 'joeshmoe@default.com', 'Joe', 'Shmoe', 'Default_User', 'password1', 100.00 );";
-
-        rc = sqlite3_exec(db, sql, callback, 0, &zErrMsg);
-        if( rc != SQLITE_OK ){
-            fprintf(stderr, "SQL error: %s\n", zErrMsg);
-            sqlite3_free(zErrMsg);
-        } else {
-            fprintf(stdout, "Records created successfully\n");
-        }
-    } else {
-        fprintf(stdout, "There are currently %d users in the database\n", user_count);
-    }
+    // create the stocks table if needed and add samole entries if empty
+    create_stocks(db);
 
 
     /* build address data structure */
@@ -152,7 +91,7 @@ int main(int argc, char* argv[]) {
         }
         printf("Connected\n");
         while ((buf_len = recv(new_s, buf, sizeof(buf), 0))) {
-            printf("Request recieved: ");
+            printf("Recieved: ");
             fputs(buf, stdout); // print the text recieved
 
             string request(buf);  //convert to string object to work with it easier
@@ -163,12 +102,12 @@ int main(int argc, char* argv[]) {
             } else if (request.find("LIST", 0) == 0) {
                 list_command(new_s, buf, db);
             } else if (request.find("BALANCE", 0) == 0) {
-                balance_command(s, buf, db);
+                balance_command(new_s, buf, db);
             } else if (request.find("SHUTDOWN", 0) == 0) {
                 // call shutdown_command
             } else if (request.find("QUIT", 0) == 0) {
-                quit_command(s, buf, db);
-                break; //break from this while loop to close the connection and wait to recieve a new connection
+                quit_command(new_s, buf, db);
+                break; // break from this while loop to close the connection and wait for new connection
             } else {
                 fprintf(stderr, "Invalid message request: %s\n", request.c_str());
                 const char* error_code = "400 invalid command\nPlease use BUY, SELL, LIST, BALANCE, SHUTDOWN, or QUIT commands\n";
