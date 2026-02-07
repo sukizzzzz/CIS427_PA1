@@ -89,9 +89,7 @@ int main(int argc, char* argv[]) {
         }
         printf("Connected\n");
         while ((buf_len = recv(new_s, buf, sizeof(buf), 0))) {
-            cout << "buf_len" << buf_len << endl;
             buf[buf_len-1] = '\0';
-            cout << "Strlen: " << strlen(buf) << endl;
             printf("Recieved: %s\n", buf);
             fflush(stdout);
 
