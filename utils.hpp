@@ -13,36 +13,28 @@ int callback(void *data, int argc, char **argv, char **azColName);
  */
 int count_rows(void *count, int argc, char **argv, char **azColName);
 
-/** This creates the Users table if it doesn't exits and adds a default user 
- *  if there are no users in the table 
+/** This creates the Users table if it doesn't exist and adds a default user
+ *  if there are no users in the table.
  */
 void create_users(sqlite3* db);
 
-/** This creates the Stocks table if it doesn't exits and inserts the mag 7 stocks
+/** This creates the Stocks table if it doesn't exist and inserts the Mag 7 stocks
  *  for the default user if the table is empty.
  */
 void create_stocks(sqlite3* db);
 
-/** This will buy an amount of stocks and respond to the client
- *  with the new balance. It creates or updates a record in the stock
- *  table if one does not exist.
+/** Buys an amount of stocks and responds to the client with the new balance.
+ *  Creates or updates a record in the Stocks table if one does not exist.
  */
 int buy_command(int socket, char* request, sqlite3* db);
 
-
 int sell_command(int socket, char* request, sqlite3* db);
-
-
-static int list_callback(void *data, int argc, char **argv, char **azColName);
 
 int list_command(int socket, char* request, sqlite3* db);
 
-
 int balance_command(int socket, char* request, sqlite3* db);
 
-
 int shutdown_command(int socket, char* request, sqlite3* db);
-
 
 int quit_command(int socket, char* request, sqlite3* db);
 

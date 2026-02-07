@@ -6,10 +6,14 @@
 #include <iostream>
 #include <sqlite3.h>
 #include <string>
-#include <sys/socket.h>    /* Unix; Windows: use winsock2.h for send() */
+#include <sys/socket.h>    
 
 using namespace std;
 
+/** Callback function for the sqlite database.
+ *  Prints each record processed in each SELECT statement executed within the SQL argument.
+ *  From https://www.tutorialspoint.com/sqlite/sqlite_c_cpp.htm
+ */
 int callback(void *data, int argc, char **argv, char **azColName) {
     fprintf(stderr, "%s: ", (const char*)data);
 
@@ -20,7 +24,9 @@ int callback(void *data, int argc, char **argv, char **azColName) {
     return 0;
 }
 
-
+/** Used to count the number of entries in a table.
+ *  Meant to be passed to sqlite3_exec with an sql query of SELECT COUNT(*) FROM table;
+ */
 int count_rows(void *count, int argc, char **argv, char **azColName) {
     if (argc == 1) {
         *static_cast<int*>(count) = atoi(argv[0]);
@@ -30,7 +36,9 @@ int count_rows(void *count, int argc, char **argv, char **azColName) {
     return 0;
 }
 
-
+/** This creates the Users table if it doesn't exist and adds a default user
+ *  if there are no users in the table.
+ */
 void create_users(sqlite3* db) {
     const char *sql;
     int rc;
@@ -85,7 +93,9 @@ void create_users(sqlite3* db) {
     }
 }
 
-
+/** This creates the Stocks table if it doesn't exist and inserts the Mag 7 stocks
+ *  for the default user if the table is empty.
+ */
 void create_stocks(sqlite3* db) {
     const char *sql;
     int rc;
@@ -145,67 +155,154 @@ void create_stocks(sqlite3* db) {
     }
 }
 
+/** Used in conjunction with a SELECT statement to get the first value that will be balance  */
+static int getBalance_callback(void *data, int argc, char **argv, char **azColName) {
+    double* balance = static_cast<double*>(data);
+    *balance = atof(argv[0]);
+    return 0;
+}
 
+/** Logs the SQL error, send error message to the client, and free zErrMsg. 
+ */
+static void handle_SQL_error(int socket, char* zErrMsg) {
+    char response[256];
+    snprintf(response, sizeof(response),"500 SQL error: %s\n", zErrMsg);
+    fprintf(stderr, "%sError message sent to client\n", response);
+    send(socket, response, strlen(response), 0);
+    sqlite3_free(zErrMsg);
+}
+
+/** Buys an amount of stocks and responds to the client with the new balance.
+ *  Creates or updates a record in the Stocks table if one does not exist.
+ */
 int buy_command(int socket, char* request, sqlite3* db) {
-    // TODO make sure to test invalid strings like missing fields or not numbers
-
-    // parse input string (strtok_r is thread-safe; saveptr holds state between calls)
+    // parse input string
     char *saveptr = nullptr;
     char *buy = strtok_r(request, " ", &saveptr);
     char *stock_symbol = strtok_r(nullptr, " ", &saveptr);
     char *amount_str = strtok_r(nullptr, " ", &saveptr);
     char *price_str = strtok_r(nullptr, " ", &saveptr);
-    char *user_id = strtok_r(nullptr, " ", &saveptr);
+    char *user_id_str = strtok_r(nullptr, " ", &saveptr);
 
-    // check for format errors
-    if (!buy || !stock_symbol || !amount_str || !price_str || !user_id) {
-        fprintf(stderr, "BUY command recieved but incorrecly formatted\n");
-        fprintf(stderr, "Error message sent to client\n");
-        const char* error_code = "403 message format error\nCorrect format: BUY <stock_symbol> <amount_to_buy> <price_per_stock> <user_id>\n";
-        send(socket, error_code, strlen(error_code), 0);
-        return -1;
-    }
-
-    // convert the amount and price to doubles
-    double amount_to_buy;
-    double price_per_stock;
-    try {
-        amount_to_buy = std::stod(amount_str); // throws exception if conversion fails
-        price_per_stock = std::stod(price_str);
-    } catch (const std::exception&) {
-        fprintf(stderr, "Amount or price are not valid numbers\n");
-        const char* error_code = "403 message format error\nAmount and price fields must be numbers.\n";
-        send(socket, error_code, strlen(error_code), 0);
-        return -1;
-    }
-
-    // calculate stockprice and deduct it from the users and stocks balance
-    double stockprice = amount_to_buy * price_per_stock;
+    char response[256];
     char sql[256];
     int rc;
     char *zErrMsg = 0;
 
-    // get id and balance first
+    // check for format errors
+    if (!buy || !stock_symbol || !amount_str || !price_str || !user_id_str) {
+        fprintf(stderr, "BUY command received but incorrectly formatted\n");
+        fprintf(stderr, "Error message sent to client\n");
+        snprintf(response, sizeof(response),
+                 "403 message format error\nCorrect format: BUY <stock_symbol> <amount_to_buy> <price_per_stock> <user_id>\n");
+        send(socket, response, strlen(response), 0);
+        return -1;
+    }
+
+    // convert numeric values from char* to numbers
+    double num_shares_to_buy;
+    double price_per_stock;
+    int user_id;
+    try {
+        num_shares_to_buy = stod(amount_str); // throws exception if conversion fails
+        price_per_stock = stod(price_str);
+        user_id = stoi(user_id_str);
+    } catch (const std::exception&) {
+        fprintf(stderr, "Amount, price, or user_id are not valid numbers\n");
+        fprintf(stderr, "Error message sent to client\n");
+        snprintf(response, sizeof(response),
+                 "403 message format error\nAmount, price, user_id fields must be numbers.\n");
+        send(socket, response, strlen(response), 0);
+        return -1;
+    }
+
+    if (num_shares_to_buy <= 0 || price_per_stock <= 0) {
+        fprintf(stderr, "Amount or price are invalid because they are <= 0\n");
+        fprintf(stderr, "Error message sent to client\n");
+        snprintf(response, sizeof(response),
+                 "403 message format error\nAmount and price fields must be positive and non-zero.\n");
+        send(socket, response, strlen(response), 0);
+        return -1;
+    }
+
+    // calculate stockprice
+    double shares_bought_USD = num_shares_to_buy * price_per_stock;
+
+    // check if the user is in the database and if so get the balance
+    double user_balance = -1;
+
     snprintf(sql, sizeof(sql),
-            "SELECT FROM Stocks WHERE ... "); // TODO finish here
-    // insert to Stocks table
-    double new_balance = 0;
-    snprintf(sql, sizeof(sql), //TODO warning missing stock_name!!
-             "INSERT INTO Stocks (stock_symbol, stock_balance, user_id) VALUES (%s, %f, %d);",       
-             stock_symbol, new_balance, 1);
+            "SELECT usd_balance FROM Users WHERE ID=%d", user_id);
+    
+    rc = sqlite3_exec(db, sql, getBalance_callback, &user_balance, &zErrMsg);
 
-    // update balance in Users table
+    if (rc != SQLITE_OK) {
+        handle_SQL_error(socket, zErrMsg);
+        return -1;
+    }
+    if (user_balance < 0) {
+        snprintf(response, sizeof(response), "500 user %d does not exist\n", user_id);
+        fprintf(stderr, "%sError message sent to client\n", response);
+        send(socket, response, strlen(response), 0);
+        return -1;
+    }
+    if (user_balance < shares_bought_USD) {
+        snprintf(response, sizeof(response),
+                 "403 User has an insufficient balance of $%.2f for a transaction of $%.2f\n",
+                 user_balance, shares_bought_USD);
+        fprintf(stderr, "%sError message sent to client\n", response);
+        send(socket, response, strlen(response), 0);
+        return -1;
+    }
 
+    // update the Users balance in the database
+    user_balance -= shares_bought_USD;
+    snprintf(sql, sizeof(sql),
+            "UPDATE Users SET usd_balance=%f WHERE ID=%d", user_balance, user_id);
 
-    // new record in the Stocks table is created or updated if one does exist
+    rc = sqlite3_exec(db, sql, nullptr, nullptr, &zErrMsg);
+    if (rc != SQLITE_OK) {
+        handle_SQL_error(socket, zErrMsg);
+        return -1;
+    }
 
-    // If the operation is successful return a message to the client with “200 OK”, 
-    // the new usd_balance
-    // and new stock_balance;
-    // otherwise, an appropriate message should be displayed, e.g.: Not
-    // enough balance, or user1 doesn’t exist, etc.
-     
-    // TODO finish
+    // update the Stocks table
+    double shares_owned = -1;
+    snprintf(sql, sizeof(sql),
+    "SELECT stock_balance FROM Stocks WHERE stock_symbol='%s' AND user_id=%d",
+            stock_symbol, user_id);
+
+    rc = sqlite3_exec(db, sql, getBalance_callback, &shares_owned, &zErrMsg);
+    if (rc != SQLITE_OK) {
+        handle_SQL_error(socket, zErrMsg);
+        return -1;
+    }
+
+    if (shares_owned < 0) {  //indicates this stock is not in the database
+        shares_owned = 0;
+        snprintf(sql, sizeof(sql),
+             "INSERT INTO Stocks (stock_symbol, stock_name, stock_balance, user_id) VALUES ('%s', '%s', %f, %d);",
+             stock_symbol, stock_symbol, num_shares_to_buy, user_id);
+        rc = sqlite3_exec(db, sql, nullptr, nullptr, &zErrMsg);
+        if (rc != SQLITE_OK) {
+            handle_SQL_error(socket, zErrMsg);
+            return -1;
+        }
+    } else {
+        snprintf(sql, sizeof(sql),
+             "UPDATE Stocks SET stock_balance=%f WHERE stock_symbol='%s' AND user_id=%d",
+             shares_owned + num_shares_to_buy, stock_symbol, user_id);
+        rc = sqlite3_exec(db, sql, nullptr, nullptr, &zErrMsg);
+        if (rc != SQLITE_OK) {
+            handle_SQL_error(socket, zErrMsg);
+            return -1;
+        }
+    }
+
+    snprintf(response, sizeof(response),
+             "200 OK\nBOUGHT: New balance: %.2f %s. USD balance $%.2f\n",
+             shares_owned + num_shares_to_buy, stock_symbol, user_balance);
+    send(socket, response, strlen(response), 0);
 
     return 0;
 }

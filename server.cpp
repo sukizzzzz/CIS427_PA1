@@ -2,19 +2,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sqlite3.h>
-#include <strings.h>       /* Windows: not standard; use <cstring> + memset() instead of bzero */
+#include <strings.h>       
 #include <unordered_set>
 #include <string>
 #include <iostream>
 #include <stdio.h>
-#include <sys/types.h>     /* Unix socket headers; Windows: use winsock2.h, ws2tcpip.h */
+#include <sys/types.h>     
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <stdlib.h>
-#include <unistd.h>        /* Unix; Windows: close() -> closesocket() for sockets */
+#include <unistd.h>        
 #include "utils.hpp"
-/* Windows: call WSAStartup() before any socket use and WSACleanup() before exit */
 
 using namespace std;
 
@@ -43,7 +42,7 @@ int main(int argc, char* argv[]) {
     char buf[MAX_LINE];
     int buf_len;
     socklen_t addr_len;
-    int s, new_s;          /* Windows: use SOCKET type; check for INVALID_SOCKET instead of < 0 */
+    int s, new_s;          
 
     // Open the database and check for errors
     rc = sqlite3_open("users_and_stocks.db", &db);
@@ -63,19 +62,18 @@ int main(int argc, char* argv[]) {
 
 
     /* build address data structure */
-    /* Windows: call WSAStartup(MAKEWORD(2,2), &wsaData) here before socket/bind/listen */
-    bzero((char *)&sin, sizeof(sin));  /* set sin to 0; Windows: use memset(&sin, 0, sizeof(sin)) */
+    bzero((char *)&sin, sizeof(sin));  
     sin.sin_family = AF_INET;
     sin.sin_addr.s_addr = INADDR_ANY;
     sin.sin_port = htons(SERVER_PORT);
 
 
     /* setup passive open */
-    if ((s = socket(PF_INET, SOCK_STREAM, 0)) < 0) {  /* Windows: check == INVALID_SOCKET */
+    if ((s = socket(PF_INET, SOCK_STREAM, 0)) < 0) {  
         perror("socket error");
         exit(1);
     }
-    if ((bind(s, (struct sockaddr *)&sin, sizeof(sin))) < 0) {  /* Windows: different error style */
+    if ((bind(s, (struct sockaddr *)&sin, sizeof(sin))) < 0) {  
         perror("bind error");
         exit(1);
     }
@@ -85,14 +83,17 @@ int main(int argc, char* argv[]) {
     /* wait for connection, then receive and print text */
     while(1) {
         printf("Waiting on connection\n");
-        if ((new_s = accept(s, (struct sockaddr *)&sin, &addr_len)) < 0) {  /* Windows: INVALID_SOCKET */
+        if ((new_s = accept(s, (struct sockaddr *)&sin, &addr_len)) < 0) {  
             perror("accept error");
             exit(1);
         }
         printf("Connected\n");
         while ((buf_len = recv(new_s, buf, sizeof(buf), 0))) {
-            printf("Recieved: ");
-            fputs(buf, stdout); // print the text recieved
+            cout << "buf_len" << buf_len << endl;
+            buf[buf_len-1] = '\0';
+            cout << "Strlen: " << strlen(buf) << endl;
+            printf("Recieved: %s\n", buf);
+            fflush(stdout);
 
             string request(buf);  //convert to string object to work with it easier
             if (request.find("BUY", 0) == 0) {
@@ -113,14 +114,11 @@ int main(int argc, char* argv[]) {
                 const char* error_code = "400 invalid command\nPlease use BUY, SELL, LIST, BALANCE, SHUTDOWN, or QUIT commands\n";
                 send(new_s, error_code, strlen(error_code), 0);
             }
-
-
         }
-        close(new_s);      /* Windows: use closesocket(new_s) */
+
+        close(new_s);      
     }
 
-
     sqlite3_close(db);
-    /* Windows: call WSACleanup() here before return */
     return 0;
 }
